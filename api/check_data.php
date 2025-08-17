@@ -22,8 +22,8 @@ require_once '../config/db.php';
 try {
     // เตรียม query เพื่อตรวจสอบข้อมูล
     $sql = "SELECT COUNT(*) as record_count 
-            FROM energy_data 
-            WHERE DATE(timestamp) BETWEEN :start_date AND :end_date";
+            FROM room 
+            WHERE DATE(Time) BETWEEN :start_date AND :end_date";
     
     $stmt = $conn->prepare($sql);
     $stmt->bindParam(':start_date', $start_date, PDO::PARAM_STR);
