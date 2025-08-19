@@ -6,12 +6,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const today = new Date();
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(today.getDate() - 7);
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     
     // สร้างตัวเลือก datepicker พร้อมลูกเล่น
     flatpickr("#start-date", {
         dateFormat: "Y-m-d",
         locale: "th",
-        defaultDate: oneWeekAgo,
+        defaultDate: firstDayOfMonth,
         animate: true,
         allowInput: true,
         disableMobile: true,

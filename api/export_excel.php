@@ -10,7 +10,7 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 
 // รับค่าวันที่เริ่มต้นและวันที่สิ้นสุด
-$start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-d', strtotime('-7 days'));
+$start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-01');
 $end_date = isset($_GET['end_date']) ? $_GET['end_date'] : date('Y-m-d');
 
 // ปรับวันที่สิ้นสุดให้เป็นสิ้นสุดของวัน
