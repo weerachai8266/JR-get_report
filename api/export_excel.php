@@ -12,13 +12,16 @@ use PhpOffice\PhpSpreadsheet\Style\Fill;
 // รับค่าวันที่เริ่มต้นและวันที่สิ้นสุด
 $start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-01');
 $end_date = isset($_GET['end_date']) ? $_GET['end_date'] : date('Y-m-d');
+$mode = isset($_GET['mode']) ? $_GET['mode'] : 'hourly';
 
 // ปรับวันที่สิ้นสุดให้เป็นสิ้นสุดของวัน
 $end_date_time = $end_date . ' 23:59:59';
 
 try {
-    // คำสั่ง SQL เพื่อดึงข้อมูล Energy ล่าสุดในแต่ละชั่วโมงของแต่ละวันในช่วงที่กำหนด
-    $sql = "
+    // ดึงข้อมูลทั้งแบบรายชั่วโมงและแบบ 15 นาที (ไม่ว่าจะเลือกโหมดไหนก็ตาม)
+    
+    // 1. ดึงข้อมูลแบบรายชั่วโมง
+    $hourly_sql = "
     WITH hourly_data AS (
         SELECT
             DATE(Time) as date_only,
@@ -46,216 +49,282 @@ try {
         date_only, hour_only
     ";
     
-    $stmt = $conn->prepare($sql);
+    $stmt = $conn->prepare($hourly_sql);
     $stmt->bindParam(':start_date', $start_date);
     $stmt->bindParam(':end_date', $end_date_time);
     $stmt->execute();
     
-    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $hourly_results = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // แปลงข้อมูลเป็นรูปแบบ pivot
+    // 2. ดึงข้อมูลแบบ 15 นาที
+    $quarter_sql = "
+    WITH quarter_data AS (
+        SELECT
+            DATE(Time) as date_only,
+            HOUR(Time) as hour_only,
+            FLOOR(MINUTE(Time) / 15) * 15 as minute_group,
+            MAX(Time) as max_time
+        FROM
+            room
+        WHERE
+            Time BETWEEN :start_date AND :end_date
+        GROUP BY
+            DATE(Time),
+            HOUR(Time),
+            FLOOR(MINUTE(Time) / 15) * 15
+    )
+    SELECT
+        r.ID,
+        r.Time,
+        r.Energy,
+        DATE(r.Time) as date_only,
+        HOUR(r.Time) as hour_only,
+        FLOOR(MINUTE(r.Time) / 15) * 15 as minute_only
+    FROM
+        room r
+    INNER JOIN
+        quarter_data q ON r.Time = q.max_time
+    ORDER BY
+        date_only, hour_only, minute_only
+    ";
+    
+    $stmt = $conn->prepare($quarter_sql);
+    $stmt->bindParam(':start_date', $start_date);
+    $stmt->bindParam(':end_date', $end_date_time);
+    $stmt->execute();
+    
+    $quarter_results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // สร้างรายการวันที่ที่มีข้อมูล
     $dates = [];
-    $energy_data = [];
     
-    foreach ($results as $row) {
+    // แปลงข้อมูลรายชั่วโมงเป็นรูปแบบ pivot
+    $hourly_data = [];
+    
+    foreach ($hourly_results as $row) {
         $date = $row['date_only'];
-        $hour = sprintf('%02d', $row['hour_only']);
+        $key = sprintf('%02d', $row['hour_only']);
         $energy = $row['Energy'];
         
         if (!in_array($date, $dates)) {
             $dates[] = $date;
         }
         
-        if (!isset($energy_data[$date])) {
-            $energy_data[$date] = [];
+        if (!isset($hourly_data[$date])) {
+            $hourly_data[$date] = [];
         }
         
-        $energy_data[$date][$hour] = $energy;
+        $hourly_data[$date][$key] = $energy;
+    }
+    
+    // แปลงข้อมูลราย 15 นาทีเป็นรูปแบบ pivot
+    $quarter_data = [];
+    
+    foreach ($quarter_results as $row) {
+        $date = $row['date_only'];
+        $hour = sprintf('%02d', $row['hour_only']);
+        
+        // ทำให้มั่นใจว่าค่านาทีจะเป็น 00, 15, 30, หรือ 45 เท่านั้น
+        $minuteVal = intval($row['minute_only']);
+        // ปัดค่านาทีเป็น 0, 15, 30, 45
+        $minuteVal = floor($minuteVal / 15) * 15;
+        $minute = sprintf('%02d', $minuteVal);
+        
+        $key = "$hour:$minute";
+        $energy = $row['Energy'];
+        
+        if (!in_array($date, $dates)) {
+            $dates[] = $date;
+        }
+        
+        if (!isset($quarter_data[$date])) {
+            $quarter_data[$date] = [];
+        }
+        
+        $quarter_data[$date][$key] = $energy;
     }
     
     // เรียงวันที่
     sort($dates);
-    
-    // สร้างไฟล์ Excel
+
+    // สร้าง spreadsheet
     $spreadsheet = new Spreadsheet();
-    $sheet = $spreadsheet->getActiveSheet();
-    $sheet->setTitle('ประมาณการผลิตไฟฟ้า');
     
-    // ตั้งค่ารูปแบบหัวตาราง
-    $sheet->setCellValue('A1', 'Huaybong Biotech Co., Ltd.');
-    $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($dates) + 1);
-    $sheet->mergeCells('A1:' . $lastCol . '1');
-
-    $sheet->setCellValue('A2', 'รายงานสมดุลการผลิต และใช้ไฟฟ้า');
-    $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($dates) + 1);
-    $sheet->mergeCells('A2:' . $lastCol . '2');
-    
-    $sheet->setCellValue('A3', 'ประมาณการผลิตไฟฟ้า ระหว่างวันที่ ' . $start_date . ' ถึง ' . $end_date);
-    $lastCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($dates) + 1);
-    $sheet->mergeCells('A3:' . $lastCol . '3');
-
-    // รูปแบบหัวตาราง
+    // ฟังก์ชันสำหรับตั้งค่า style ของหัวตาราง
     $headerStyle = [
         'font' => [
             'bold' => true,
-            'size' => 14
         ],
         'alignment' => [
-            'horizontal' => Alignment::HORIZONTAL_CENTER
-        ]
-    ];
-    
-    $sheet->getStyle('A1:' . \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($dates) + 1) . '3')->applyFromArray($headerStyle);
-    
-    // เพิ่มหัวตาราง
-    $sheet->setCellValue('A5', 'เวลา / วันที่');
-    
-    // เพิ่มหัวคอลัมน์วันที่
-    $colheader = 2;
-    
-    for ($i = 0; $i < count($dates); $i++) {
-        // ตำแหน่งคอลัมน์เริ่มจาก B (คอลัมน์ A เป็นเวลา)
-        $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colheader++);
-        // แปลงรูปแบบวันที่เป็น d/m/Y
-        $formatted_date = date('d/m/Y', strtotime($dates[$i]));
-        $sheet->setCellValue($col . '5', $formatted_date);
-        
-        // ตั้งค่าความกว้างของคอลัมน์
-        $sheet->getColumnDimension($col)->setWidth(12);
-    }
-    
-    // เพิ่มข้อมูล Energy
-    for ($hour = 0; $hour < 24; $hour++) {
-        $hour_str = sprintf('%02d', $hour);
-        $row_num = $hour + 6;
-        
-        // เพิ่มชั่วโมง
-        $sheet->setCellValue('A' . $row_num, $hour_str . ':00');
-        
-        // เพิ่มค่า Energy สำหรับแต่ละวัน
-        $coldata = 2;
-        for ($i = 0; $i < count($dates); $i++) {
-            $date = $dates[$i];
-            $col = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($coldata++);
-
-            if (isset($energy_data[$date][$hour_str])) {
-                $sheet->setCellValue($col . $row_num, $energy_data[$date][$hour_str]);
-            } else {
-                $sheet->setCellValue($col . $row_num, '-');
-            }
-        }
-    }
-    // sum
-    $sheet->setCellValue('A29', 'Total');
-    for ($i = 0; $i < count($dates); $i++) {
-        $colsum = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 2);
-        $sheet->setCellValue($colsum . '29', '=sum(' . $colsum . '6:' . $colsum . '28)');
-    }
-
-    // ตั้งค่าความกว้างของคอลัมน์ชั่วโมง
-    $sheet->getColumnDimension('A')->setWidth(10);
-    
-    // ตั้งค่าสไตล์ของตาราง
-    $styleArray = [
-        'borders' => [
-            'allBorders' => [
-                'borderStyle' => Border::BORDER_THIN
-            ]
+            'horizontal' => Alignment::HORIZONTAL_CENTER,
+            'vertical' => Alignment::VERTICAL_CENTER,
         ],
-        'alignment' => [
-            'horizontal' => Alignment::HORIZONTAL_CENTER
-        ]
-    ];
-    
-    $lastColumn = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex(count($dates) + 1);
-    $lastRow = $hour + 6 - 1; // 6-1 = sum
-    $sheet->getStyle('A5:' . $lastColumn . $lastRow)->applyFromArray($styleArray);
-    
-    // ตั้งค่าสไตล์หัวตาราง
-    $headerStyleArray = [
         'fill' => [
             'fillType' => Fill::FILL_SOLID,
-            'color' => ['rgb' => 'D9D9D9']
+            'color' => ['argb' => 'FFE0E0E0'],
         ],
-        'font' => [
-            'bold' => true
-        ]
+        'borders' => [
+            'allBorders' => [
+                'borderStyle' => Border::BORDER_THIN,
+            ],
+        ],
     ];
-    
-    $sheet->getStyle('A5:' . $lastColumn . '5')->applyFromArray($headerStyleArray);
-    $sheet->getStyle('A29:' . $lastColumn . '29')->applyFromArray($headerStyleArray);  // sum
-    $sheet->getStyle('A5:A28')->applyFromArray($headerStyleArray);
 
-    // สร้าง Sheet ที่สองสำหรับข้อมูลล่าสุด 20 รายการ
-    // $spreadsheet->createSheet();
-    // $sheet2 = $spreadsheet->getSheet(1);
-    // $sheet2->setTitle('ข้อมูลล่าสุด 20 รายการ');
+    // ฟังก์ชันสำหรับสร้างข้อมูลรายชั่วโมง
+    function createHourlySheet($spreadsheet, $dates, $energy_data, $start_date, $end_date, $headerStyle) {
+        // สร้าง sheet รายชั่วโมง
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('รายชั่วโมง');
+        
+        // ตั้งค่าหัวตาราง
+        $sheet->setCellValue('A1', 'รายงานข้อมูลพลังงาน (รายชั่วโมง)');
+        $sheet->mergeCells('A1:' . chr(65 + count($dates)) . '1');
+        
+        $sheet->setCellValue('A2', 'วันที่: ' . date('d/m/Y', strtotime($start_date)) . ' ถึง ' . date('d/m/Y', strtotime($end_date)));
+        $sheet->mergeCells('A2:' . chr(65 + count($dates)) . '2');
+        
+        $sheet->getStyle('A1:' . chr(65 + count($dates)) . '2')->applyFromArray($headerStyle);
+        
+        // หัวคอลัมน์
+        $sheet->setCellValue('A4', 'เวลา');
+        
+        // เพิ่มวันที่ในหัวคอลัมน์
+        foreach ($dates as $index => $date) {
+            $column = chr(66 + $index);
+            $sheet->setCellValue($column . '4', date('d/m/Y', strtotime($date)));
+        }
+        
+        // ตั้งค่าสไตล์หัวคอลัมน์
+        $sheet->getStyle('A4:' . chr(65 + count($dates)) . '4')->applyFromArray($headerStyle);
+        
+        // เพิ่มข้อมูล
+        $rowIndex = 5;
+        
+        // สร้างข้อมูลรายชั่วโมง
+        for ($hour = 0; $hour < 24; $hour++) {
+            $hourKey = sprintf('%02d', $hour);
+            
+            $sheet->setCellValue('A' . $rowIndex, $hourKey . ':00');
+            
+            // เพิ่มข้อมูลแต่ละวัน
+            foreach ($dates as $index => $date) {
+                $column = chr(66 + $index);
+                
+                if (isset($energy_data[$date][$hourKey])) {
+                    $sheet->setCellValue($column . $rowIndex, $energy_data[$date][$hourKey]);
+                } else {
+                    $sheet->setCellValue($column . $rowIndex, '-');
+                }
+            }
+            
+            $rowIndex++;
+        }
+        
+        // ตั้งค่าความกว้างคอลัมน์อัตโนมัติ
+        foreach (range('A', chr(65 + count($dates))) as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // ปรับแต่งสไตล์เซลล์ข้อมูล
+        $dataRange = 'A5:' . chr(65 + count($dates)) . ($rowIndex - 1);
+        $sheet->getStyle($dataRange)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        $sheet->getStyle($dataRange)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        
+        // ตั้งค่าคอลัมน์เวลาให้อยู่ตรงกลาง
+        $sheet->getStyle('A5:A' . ($rowIndex - 1))->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    }
+
+    // ฟังก์ชันสำหรับสร้างข้อมูลราย 15 นาที
+    function createQuarterSheet($spreadsheet, $dates, $energy_data, $start_date, $end_date, $headerStyle) {
+        // สร้าง sheet ราย 15 นาที
+        $sheet = $spreadsheet->createSheet();
+        $sheet->setTitle('ทุก 15 นาที');
+        
+        // ตั้งค่าหัวตาราง
+        $sheet->setCellValue('A1', 'รายงานข้อมูลพลังงาน (ทุก 15 นาที)');
+        $sheet->mergeCells('A1:' . chr(65 + count($dates)) . '1');
+        
+        $sheet->setCellValue('A2', 'วันที่: ' . date('d/m/Y', strtotime($start_date)) . ' ถึง ' . date('d/m/Y', strtotime($end_date)));
+        $sheet->mergeCells('A2:' . chr(65 + count($dates)) . '2');
+        
+        $sheet->getStyle('A1:' . chr(65 + count($dates)) . '2')->applyFromArray($headerStyle);
+        
+        // หัวคอลัมน์
+        $sheet->setCellValue('A4', 'เวลา');
+        
+        // เพิ่มวันที่ในหัวคอลัมน์
+        foreach ($dates as $index => $date) {
+            $column = chr(66 + $index);
+            $sheet->setCellValue($column . '4', date('d/m/Y', strtotime($date)));
+        }
+        
+        // ตั้งค่าสไตล์หัวคอลัมน์
+        $sheet->getStyle('A4:' . chr(65 + count($dates)) . '4')->applyFromArray($headerStyle);
+        
+        // เพิ่มข้อมูล
+        $rowIndex = 5;
+        
+        // สร้างข้อมูลราย 15 นาที
+        for ($hour = 0; $hour < 24; $hour++) {
+            $hourStr = sprintf('%02d', $hour);
+            
+            for ($minute = 0; $minute < 60; $minute += 15) {
+                $minuteStr = sprintf('%02d', $minute);
+                $timeKey = "$hourStr:$minuteStr";
+                
+                $sheet->setCellValue('A' . $rowIndex, $timeKey);
+                
+                // เพิ่มข้อมูลแต่ละวัน
+                foreach ($dates as $index => $date) {
+                    $column = chr(66 + $index);
+                    
+                    if (isset($energy_data[$date][$timeKey])) {
+                        $sheet->setCellValue($column . $rowIndex, $energy_data[$date][$timeKey]);
+                    } else {
+                        $sheet->setCellValue($column . $rowIndex, '-');
+                    }
+                }
+                
+                $rowIndex++;
+            }
+        }
+        
+        // ตั้งค่าความกว้างคอลัมน์อัตโนมัติ
+        foreach (range('A', chr(65 + count($dates))) as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // ปรับแต่งสไตล์เซลล์ข้อมูล
+        $dataRange = 'A5:' . chr(65 + count($dates)) . ($rowIndex - 1);
+        $sheet->getStyle($dataRange)->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        $sheet->getStyle($dataRange)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        
+        // ตั้งค่าคอลัมน์เวลาให้อยู่ตรงกลาง
+        $sheet->getStyle('A5:A' . ($rowIndex - 1))->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    }
+
+    // สร้าง sheet ทั้งสองแบบ (รายชั่วโมงและราย 15 นาที)
+    createHourlySheet($spreadsheet, $dates, $hourly_data, $start_date, $end_date, $headerStyle);
+    createQuarterSheet($spreadsheet, $dates, $quarter_data, $start_date, $end_date, $headerStyle);
     
-    // // คำสั่ง SQL ดึงข้อมูลล่าสุด 20 รายการ
-    // $sql = "SELECT `ID`, `Time`, `Voltage`, `Current`, `Frequency`, `Power`, `PF`, `Energy`, `Tem`, `Hum` 
-    //         FROM `room` 
-    //         ORDER BY `Time` DESC 
-    //         LIMIT 20";
+    // สร้างไฟล์ Excel
+    $writer = new Xlsx($spreadsheet);
     
-    // $stmt = $conn->prepare($sql);
-    // $stmt->execute();
-    // $recent_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // ตั้งชื่อไฟล์
+    $modeText = ($mode === 'quarter') ? 'ทุก15นาที' : 'รายชั่วโมง';
+    $filename = 'energy_report_' . $start_date . '_to_' . $end_date . '_' . $modeText . '.xlsx';
     
-    // // เพิ่มหัวตาราง
-    // $headers = [
-    //     'A' => 'ID',
-    //     'B' => 'เวลา',
-    //     'C' => 'แรงดันไฟฟ้า (V)',
-    //     'D' => 'กระแสไฟฟ้า (A)',
-    //     'E' => 'ความถี่ (Hz)',
-    //     'F' => 'กำลังไฟฟ้า (W)',
-    //     'G' => 'Power Factor',
-    //     'H' => 'พลังงาน (kWh)',
-    //     'I' => 'อุณหภูมิ (°C)',
-    //     'J' => 'ความชื้น (%)'
-    // ];
-    
-    // foreach ($headers as $col => $header) {
-    //     $sheet2->setCellValue($col . '1', $header);
-    //     $sheet2->getColumnDimension($col)->setWidth(15);
-    // }
-    
-    // // ตั้งค่าความกว้างของคอลัมน์เวลา
-    // $sheet2->getColumnDimension('B')->setWidth(20);
-    
-    // // เพิ่มข้อมูล
-    // $row = 2;
-    // foreach ($recent_data as $data) {
-    //     $sheet2->setCellValue('A' . $row, $data['ID']);
-    //     $sheet2->setCellValue('B' . $row, $data['Time']);
-    //     $sheet2->setCellValue('C' . $row, $data['Voltage']);
-    //     $sheet2->setCellValue('D' . $row, $data['Current']);
-    //     $sheet2->setCellValue('E' . $row, $data['Frequency']);
-    //     $sheet2->setCellValue('F' . $row, $data['Power']);
-    //     $sheet2->setCellValue('G' . $row, $data['PF']);
-    //     $sheet2->setCellValue('H' . $row, $data['Energy']);
-    //     $sheet2->setCellValue('I' . $row, $data['Tem']);
-    //     $sheet2->setCellValue('J' . $row, $data['Hum']);
-    //     $row++;
-    // }
-    
-    // // ตั้งค่าสไตล์ตาราง
-    // $sheet2->getStyle('A1:J1')->applyFromArray($headerStyleArray);
-    // $sheet2->getStyle('A1:J' . ($row - 1))->applyFromArray($styleArray);
-    
-    // // กำหนดชื่อไฟล์
-    // $filename = 'รายงานการใช้พลังงาน_' . date('Y-m-d_His') . '.xlsx';
-    
-    // ดาวน์โหลดไฟล์
+    // ส่งไฟล์ไปยังเบราว์เซอร์
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment;filename="ประมาณการผลิตไฟฟ้า ' . $start_date . '_' . $end_date . '.xlsx"');
+    header('Content-Disposition: attachment;filename="' . $filename . '"');
     header('Cache-Control: max-age=0');
     
-    $writer = new Xlsx($spreadsheet);
     $writer->save('php://output');
+    exit;
     
 } catch (PDOException $e) {
-    echo 'Database error: ' . $e->getMessage();
-} catch (Exception $e) {
-    echo 'Error: ' . $e->getMessage();
+    // กรณีเกิดข้อผิดพลาด
+    header('Content-Type: application/json');
+    http_response_code(500);
+    echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
 }

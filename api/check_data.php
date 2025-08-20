@@ -9,6 +9,7 @@ header('Content-Type: application/json');
 // รับค่าวันที่จาก URL parameters
 $start_date = isset($_GET['start_date']) ? $_GET['start_date'] : null;
 $end_date = isset($_GET['end_date']) ? $_GET['end_date'] : null;
+$mode = isset($_GET['mode']) ? $_GET['mode'] : 'hourly';
 
 // ตรวจสอบว่ามีการระบุวันที่หรือไม่
 if (!$start_date || !$end_date) {
@@ -38,6 +39,7 @@ try {
     echo json_encode([
         'hasData' => $hasData,
         'count' => $result['record_count'],
+        'mode' => $mode,
         'period' => [
             'start' => $start_date,
             'end' => $end_date

@@ -46,12 +46,23 @@ document.addEventListener('DOMContentLoaded', function() {
     // แสดงการอัพเดทเวลาล่าสุด
     updateLastUpdatedTime();
     
+    // อัพเดทข้อความตามโหมดการแสดงผล
+    updateDisplayMode();
+    
     // โหลดข้อมูลเริ่มต้น
     loadData();
     
     // เมื่อคลิกปุ่มค้นหา
     document.getElementById('search-btn').addEventListener('click', function() {
         loadData();
+    });
+    
+    // เมื่อเปลี่ยนโหมดการแสดงผล
+    document.querySelectorAll('input[name="displayMode"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            updateDisplayMode();
+            loadData();
+        });
     });
     
     // เมื่อคลิกปุ่ม Export Excel
@@ -84,6 +95,21 @@ function updateLastUpdatedTime() {
     document.getElementById('last-updated').textContent = formattedDate;
 }
 
+// อัพเดทข้อความตามโหมดการแสดงผล
+function updateDisplayMode() {
+    const modeElement = document.querySelector('input[name="displayMode"]:checked');
+    const mode = modeElement ? modeElement.value : 'hourly';
+    const dataDescription = document.querySelector('.card-header p.text-muted');
+    
+    if (dataDescription) {
+        if (mode === 'hourly') {
+            dataDescription.textContent = 'ค่าพลังงานล่าสุดในแต่ละชั่วโมง (kWh)';
+        } else if (mode === 'quarter') {
+            dataDescription.textContent = 'ค่าพลังงานล่าสุดทุก 15 นาที (kWh)';
+        }
+    }
+}
+
 // แสดง loading
 function showLoading() {
     document.getElementById('loading').classList.remove('d-none');
@@ -99,6 +125,8 @@ function loadData() {
     showLoading();
     const startDate = document.getElementById('start-date').value;
     const endDate = document.getElementById('end-date').value;
+    const modeElement = document.querySelector('input[name="displayMode"]:checked');
+    const mode = modeElement ? modeElement.value : 'hourly';
     
     // ตรวจสอบว่าวันที่ถูกกรอกไหม
     if (!startDate || !endDate) {
@@ -108,7 +136,7 @@ function loadData() {
     }
     
     // ดึงข้อมูล Energy แบบ pivot
-    fetch(`api/get_energy_pivot.php?start_date=${startDate}&end_date=${endDate}`)
+    fetch(`api/get_energy_pivot.php?start_date=${startDate}&end_date=${endDate}&mode=${mode}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! Status: ${response.status}`);
@@ -212,6 +240,8 @@ function showNotification(message, type = 'info') {
 function renderEnergyPivot(data) {
     const dateHeaderRow = document.getElementById('date-header-row');
     const energyData = document.getElementById('energy-data');
+    const modeElement = document.querySelector('input[name="displayMode"]:checked');
+    const mode = modeElement ? modeElement.value : 'hourly';
     
     // ล้างข้อมูลเก่า
     while (dateHeaderRow.childElementCount > 1) {
@@ -251,32 +281,68 @@ function renderEnergyPivot(data) {
         dateHeaderRow.appendChild(th);
     });
     
-    // สร้างแถวสำหรับแต่ละชั่วโมง
-    for (let hour = 0; hour < 24; hour++) {
-        const tr = document.createElement('tr');
-        
-        // สร้างเซลล์แสดงชั่วโมง
-        const hourCell = document.createElement('td');
-        hourCell.textContent = `${hour.toString().padStart(2, '0')}:00`;
-        hourCell.className = 'hour-cell';
-        tr.appendChild(hourCell);
-        
-        // สร้างเซลล์สำหรับแต่ละวัน
-        dates.forEach(date => {
-            const td = document.createElement('td');
-            const hourKey = hour.toString().padStart(2, '0');
+    if (mode === 'hourly') {
+        // สร้างแถวสำหรับแต่ละชั่วโมง
+        for (let hour = 0; hour < 24; hour++) {
+            const tr = document.createElement('tr');
             
-            if (data.energy[date] && data.energy[date][hourKey] !== undefined) {
-                td.textContent = parseFloat(data.energy[date][hourKey]).toFixed(2);
-            } else {
-                td.textContent = '-';
+            // สร้างเซลล์แสดงชั่วโมง
+            const hourCell = document.createElement('td');
+            hourCell.textContent = `${hour.toString().padStart(2, '0')}:00`;
+            hourCell.className = 'hour-cell';
+            tr.appendChild(hourCell);
+            
+            // สร้างเซลล์สำหรับแต่ละวัน
+            dates.forEach(date => {
+                const td = document.createElement('td');
+                const hourKey = hour.toString().padStart(2, '0');
+                
+                if (data.energy[date] && data.energy[date][hourKey] !== undefined) {
+                    td.textContent = parseFloat(data.energy[date][hourKey]).toFixed(2);
+                } else {
+                    td.textContent = '-';
+                }
+                
+                td.className = 'value-cell';
+                tr.appendChild(td);
+            });
+            
+            energyData.appendChild(tr);
+        }
+    } else if (mode === 'quarter') {
+        // สร้างแถวสำหรับทุก 15 นาที
+        for (let hour = 0; hour < 24; hour++) {
+            const hourStr = hour.toString().padStart(2, '0');
+            
+            for (let minute = 0; minute < 60; minute += 15) {
+                const tr = document.createElement('tr');
+                const minuteStr = minute.toString().padStart(2, '0');
+                
+                // สร้างเซลล์แสดงเวลา (HH:MM)
+                const timeCell = document.createElement('td');
+                timeCell.textContent = `${hourStr}:${minuteStr}`;
+                timeCell.className = minute === 0 ? 'hour-cell' : 'time-cell';
+                tr.appendChild(timeCell);
+                
+                // สร้างเซลล์สำหรับแต่ละวัน
+                dates.forEach(date => {
+                    const td = document.createElement('td');
+                    // รูปแบบ key ที่ต้องตรงกับที่ API ส่งกลับมา
+                    const timeKey = `${hourStr}:${minuteStr}`;
+                    
+                    if (data.energy[date] && data.energy[date][timeKey] !== undefined) {
+                        td.textContent = parseFloat(data.energy[date][timeKey]).toFixed(2);
+                    } else {
+                        td.textContent = '-';
+                    }
+                    
+                    td.className = 'value-cell';
+                    tr.appendChild(td);
+                });
+                
+                energyData.appendChild(tr);
             }
-            
-            td.className = 'value-cell';
-            tr.appendChild(td);
-        });
-        
-        energyData.appendChild(tr);
+        }
     }
 }
 
@@ -324,6 +390,8 @@ function formatDateTime(dateTimeStr) {
 function exportToExcel() {
     const startDate = document.getElementById('start-date').value;
     const endDate = document.getElementById('end-date').value;
+    const modeElement = document.querySelector('input[name="displayMode"]:checked');
+    const mode = modeElement ? modeElement.value : 'hourly';
     
     // ตรวจสอบว่าวันที่ถูกกรอกไหม
     if (!startDate || !endDate) {
@@ -335,7 +403,7 @@ function exportToExcel() {
     document.querySelector('.loading-message').textContent = 'กำลังเตรียมข้อมูลสำหรับส่งออก...';
     
     // ตรวจสอบการเชื่อมต่อก่อนส่งออก
-    fetch(`api/check_data.php?start_date=${startDate}&end_date=${endDate}`)
+    fetch(`api/check_data.php?start_date=${startDate}&end_date=${endDate}&mode=${mode}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error('ไม่สามารถเชื่อมต่อกับระบบได้');
@@ -345,7 +413,7 @@ function exportToExcel() {
         .then(data => {
             if (data && data.hasData) {
                 // ดำเนินการส่งออกเมื่อมีข้อมูล
-                window.location.href = `api/export_excel.php?start_date=${startDate}&end_date=${endDate}`;
+                window.location.href = `api/export_excel.php?start_date=${startDate}&end_date=${endDate}&mode=${mode}`;
                 showNotification('เริ่มดาวน์โหลดไฟล์ Excel แล้ว', 'success');
             } else {
                 // แจ้งเตือนเมื่อไม่มีข้อมูล
