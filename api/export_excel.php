@@ -305,7 +305,7 @@ try {
 
     // สร้าง sheet ทั้งสองแบบ (รายชั่วโมงและราย 15 นาที)
     createHourlySheet($spreadsheet, $dates, $hourly_data, $start_date, $end_date, $headerStyle);
-    createQuarterSheet($spreadsheet, $dates, $quarter_data, $start_date, $end_date, $headerStyle);
+    // createQuarterSheet($spreadsheet, $dates, $quarter_data, $start_date, $end_date, $headerStyle);
     
     // สร้างไฟล์ Excel
     $writer = new Xlsx($spreadsheet);

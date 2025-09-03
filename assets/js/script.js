@@ -1,3 +1,8 @@
+// ฟังก์ชั่น รายชั่วโมง และ ทุก 15 นาที
+// แก้บรรทัด  65, 105, 138, 406
+// 
+// 
+
 document.addEventListener('DOMContentLoaded', function() {
     // ตั้งค่าปีปัจจุบันในส่วน footer
     document.getElementById('current-year').textContent = new Date().getFullYear();
@@ -57,13 +62,13 @@ document.addEventListener('DOMContentLoaded', function() {
         loadData();
     });
     
-    // เมื่อเปลี่ยนโหมดการแสดงผล
-    document.querySelectorAll('input[name="displayMode"]').forEach(radio => {
-        radio.addEventListener('change', function() {
-            updateDisplayMode();
-            loadData();
-        });
-    });
+    // คอมเม้นต์การเปลี่ยนโหมดการแสดงผล เนื่องจากเราได้คอมเม้นต์ radio button ไว้ในไฟล์ HTML แล้ว
+    // document.querySelectorAll('input[name="displayMode"]').forEach(radio => {
+    //     radio.addEventListener('change', function() {
+    //         updateDisplayMode();
+    //         loadData();
+    //     });
+    // });
     
     // เมื่อคลิกปุ่ม Export Excel
     document.getElementById('export-excel').addEventListener('click', function() {
@@ -97,8 +102,12 @@ function updateLastUpdatedTime() {
 
 // อัพเดทข้อความตามโหมดการแสดงผล
 function updateDisplayMode() {
-    const modeElement = document.querySelector('input[name="displayMode"]:checked');
-    const mode = modeElement ? modeElement.value : 'hourly';
+    // คอมเม้นต์ส่วนที่ตรวจสอบโหมดจาก radio button เนื่องจากเราได้คอมเม้นต์ radio button ไว้ในไฟล์ HTML แล้ว
+    // const modeElement = document.querySelector('input[name="displayMode"]:checked');
+    // const mode = modeElement ? modeElement.value : 'hourly';
+    
+    // กำหนดค่าเป็น hourly เสมอ เนื่องจากได้คอมเม้นต์ตัวเลือกโหมดไว้แล้ว
+    const mode = 'hourly';
     const dataDescription = document.querySelector('.card-header p.text-muted');
     
     if (dataDescription) {
@@ -125,8 +134,11 @@ function loadData() {
     showLoading();
     const startDate = document.getElementById('start-date').value;
     const endDate = document.getElementById('end-date').value;
-    const modeElement = document.querySelector('input[name="displayMode"]:checked');
-    const mode = modeElement ? modeElement.value : 'hourly';
+    
+    // คอมเม้นต์ส่วนที่ตรวจสอบโหมดจาก radio button และกำหนดค่าเป็น hourly เสมอ
+    // const modeElement = document.querySelector('input[name="displayMode"]:checked');
+    // const mode = modeElement ? modeElement.value : 'hourly';
+    const mode = 'hourly';
     
     // ตรวจสอบว่าวันที่ถูกกรอกไหม
     if (!startDate || !endDate) {
@@ -390,8 +402,11 @@ function formatDateTime(dateTimeStr) {
 function exportToExcel() {
     const startDate = document.getElementById('start-date').value;
     const endDate = document.getElementById('end-date').value;
-    const modeElement = document.querySelector('input[name="displayMode"]:checked');
-    const mode = modeElement ? modeElement.value : 'hourly';
+    
+    // คอมเม้นต์ส่วนที่ตรวจสอบโหมดจาก radio button และกำหนดค่าเป็น hourly เสมอ
+    // const modeElement = document.querySelector('input[name="displayMode"]:checked');
+    // const mode = modeElement ? modeElement.value : 'hourly';
+    const mode = 'hourly';
     
     // ตรวจสอบว่าวันที่ถูกกรอกไหม
     if (!startDate || !endDate) {
